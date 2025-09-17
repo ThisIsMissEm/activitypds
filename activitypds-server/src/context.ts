@@ -127,7 +127,7 @@ export class AppContext {
         protected_resources: [new URL(cfg.oauth.issuer).origin],
       },
 
-      accessTokenMode: AccessTokenMode.stateful,
+      accessTokenMode: AccessTokenMode.stateless,
       // accessTokenMode: AccessTokenMode.stateless,
 
       getClientInfo(clientId) {
