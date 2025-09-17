@@ -137,26 +137,29 @@ export class AppContext {
       },
     });
 
-    const oauthVerifier = new OAuthVerifier({
-      issuer: cfg.oauth.issuer,
-      // This is how @atproto/pds does it, but I can't make it work:
-      // keyset: [await JoseKey.fromKeyLike(jwtPublicKey!, undefined, "ES256K")],
-      keyset: [await JoseKey.fromKeyLike(jwtSecretKey, undefined, "HS256")],
-      dpopSecret: secrets.dpopSecret,
-      // redis: redisScratch,
-      onDecodeToken: async ({ payload, dpopProof }) => {
-        oauthLogger.info({ payload }, "onDecodeToken");
+    // The following is only necessary if using an entryway:
+    // const oauthVerifier =
+    //   oauthProvider ??
+    //   new OAuthVerifier({
+    //     issuer: cfg.oauth.issuer,
+    //     // This is how @atproto/pds does it, but I can't make it work:
+    //     keyset: [await JoseKey.fromKeyLike(jwtPublicKey!, undefined, "ES256K")],
+    //     // keyset: [await JoseKey.fromKeyLike(jwtSecretKey, undefined, "HS256")],
+    //     dpopSecret: secrets.dpopSecret,
+    //     // redis: redisScratch,
+    //     onDecodeToken: async ({ payload, dpopProof }) => {
+    //       oauthLogger.info({ payload }, "onDecodeToken");
 
-        const token = await oauthStore.readToken(payload.jti);
-        if (!token) throw InvalidTokenError.from(null, "DPoP");
+    //       const token = await oauthStore.readToken(payload.jti);
+    //       if (!token) throw InvalidTokenError.from(null, "DPoP");
 
-        payload.scope = token.data.scope ?? "";
+    //       payload.scope = token.data.scope ?? "";
 
-        return payload;
-      },
-    });
+    //       return payload;
+    //     },
+    //   });
 
-    const authVerifier = new AuthVerifier(accountManager, oauthVerifier, {
+    const authVerifier = new AuthVerifier(accountManager, oauthProvider, {
       publicUrl: cfg.service.publicUrl,
       jwtKey: jwtPublicKey ?? jwtSecretKey,
     });
