@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
+    "allowJs": true,
+    "esModuleInterop": true,
+    "checkJs": true,
+
+    "strict": true,
+    "allowUnusedLabels": false,
+    "allowUnreachableCode": false,
+    "exactOptionalPropertyTypes": false,
+    "noFallthroughCasesInSwitch": false,
+    "noImplicitAny": false,
+    "noImplicitReturns": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": false,
+
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "preserveSymlinks": false,
+    "useDefineForClassFields": true,
+
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "types": [],
+
+    "noErrorTruncation": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    // Build:
+    "outDir": "dist",
+    "rootDir": "src"
+  }
+  // "include": []
+}

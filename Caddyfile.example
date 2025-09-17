@@ -1,0 +1,49 @@
+{
+	storage file_system ./caddy-data/
+	debug
+	pki {
+		ca princess_works {
+			name "Princess Works"
+		}
+	}
+}
+
+acme.princess.works {
+	tls {
+		issuer internal {
+			ca princess_works
+		}
+	}
+	acme_server {
+		ca princess_works
+	}
+}
+
+activitypds.princess.works, *.princess.works {
+	tls {
+		issuer internal {
+			ca princess_works
+		}
+	}
+	reverse_proxy http://127.0.0.1:8080
+}
+
+acme.emelias.dev {
+	tls {
+		issuer internal {
+			ca princess_works
+		}
+	}
+	acme_server {
+		ca princess_works
+	}
+}
+
+example-app.emelias.dev {
+	tls {
+		issuer internal {
+			ca princess_works
+		}
+	}
+	reverse_proxy http://127.0.0.1:8081
+}

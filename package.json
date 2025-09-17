@@ -1,0 +1,18 @@
+{
+  "name": "activitypds",
+  "version": "0.0.1",
+  "repository": "git@github.com:thisismissem/activitypds.git",
+  "private": true,
+  "engines": {
+    "node": ">=24.7.0"
+  },
+  "author": "Emelia Smith <@thisismissem@hachyderm.io>",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@10.16.1+sha512.0e155aa2629db8672b49e8475da6226aa4bdea85fdcdfdc15350874946d4f3c91faaf64cbdc4a5d1ab8002f473d5c3fcedcd197989cf0390f9badd3c04678706",
+  "scripts": {
+    "dev": "pnpm --stream '/^dev:.+$/'",
+    "dev:caddy": "caddy run --config=./Caddyfile",
+    "dev:pds": "pnpm --filter activitypds dev",
+    "dev:example": "pnpm --filter example-app dev"
+  }
+}
