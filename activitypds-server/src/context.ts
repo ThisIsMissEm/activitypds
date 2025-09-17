@@ -127,8 +127,9 @@ export class AppContext {
         protected_resources: [new URL(cfg.oauth.issuer).origin],
       },
 
+      // Used for entryway?
+      // accessTokenMode: AccessTokenMode.stateful,
       accessTokenMode: AccessTokenMode.stateless,
-      // accessTokenMode: AccessTokenMode.stateless,
 
       getClientInfo(clientId) {
         return {
