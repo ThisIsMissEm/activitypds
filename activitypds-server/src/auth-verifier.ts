@@ -1,11 +1,6 @@
 import { KeyObject } from "node:crypto";
 import { ServerResponse } from "node:http";
-import {
-  AuthorizedOptions,
-  MethodAuthContext,
-  MethodAuthVerifier,
-  Params,
-} from "./types";
+import { AuthorizedOptions, MethodAuthVerifier } from "./types";
 import { AuthRequiredError, InvalidRequestError } from "./errors";
 import {
   Account,
@@ -106,7 +101,7 @@ export class AuthVerifier {
         { url, method: req.method, verifyTokenOptions },
         "auth-verifier:oauth"
       );
-      const { scope, sub: did } = await this.oauthVerifier
+      const token = await this.oauthVerifier
         .authenticateRequest(
           req.method || "GET",
           url,
@@ -130,6 +125,9 @@ export class AuthVerifier {
 
           throw err;
         });
+
+      oauthLogger.info({ token }, "Token Payload for OAuth");
+      const { scope, sub: did } = token;
 
       if (typeof did !== "string" || !did.startsWith("did:")) {
         throw new InvalidRequestError("InvalidToken: Malformed token");

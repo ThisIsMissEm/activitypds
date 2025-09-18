@@ -1,22 +1,10 @@
 import {
   AccessTokenMode,
-  InvalidTokenError,
   JoseKey,
-  LexiconResolver,
   OAuthProvider,
-  OAuthVerifier,
 } from "@atproto/oauth-provider";
 import { Fetch, safeFetchWrap } from "@atproto-labs/fetch-node";
-// import { AccountManager } from './account-manager/account-manager'
-// import { OAuthStore } from './account-manager/oauth-store'
-// import { ActorStore } from './actor-store/actor-store'
-// import {
-//   AuthVerifier,
-//   createPublicKeyObject,
-//   createSecretKeyObject,
-// } from './auth-verifier'
-// import { ServerConfig, ServerSecrets } from "./config";
-import { dbLogger, fetchLogger, oauthLogger } from "./logger";
+import { dbLogger, fetchLogger } from "./logger";
 import { createSecretKeyObject } from "./secret-key";
 import { OAuthStore } from "./stores/oauth";
 import { ServerConfig, ServerSecrets } from "./config";
