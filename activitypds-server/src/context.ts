@@ -148,9 +148,14 @@ export class AppContext {
     //     },
     //   });
 
+    // The oauthProvider can be passed to AuthVerifier as it extends
+    // OAuthVerifier OAuthVerifier is only necessary in context where you're not
+    // using an OAuthProvider, which I think is mainly the case for setup with
+    // entryway for PDSes.
     const authVerifier = new AuthVerifier(accountManager, oauthProvider, {
       publicUrl: cfg.service.publicUrl,
-      jwtKey: jwtPublicKey ?? jwtSecretKey,
+      jwtKey: jwtSecretKey,
+      // jwtKey: jwtPublicKey ?? jwtSecretKey,
     });
 
     return new AppContext({
