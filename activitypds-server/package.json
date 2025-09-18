@@ -1,7 +1,10 @@
 {
   "name": "activitypds",
   "version": "1.0.0",
-  "description": "",
+  "description": "A PDS like server for ActivityPub (eventually) proving the re-use of AT Proto's profile of OAuth",
+  "keywords": [],
+  "author": "Emelia Smith <@thisismissem@hachyderm.io>",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,9 +16,6 @@
     "build": "tsc --build tsconfig.build.json",
     "make:secret": "openssl rand --hex 16"
   },
-  "keywords": [],
-  "author": "Emelia Smith <@thisismissem@hachyderm.io>",
-  "license": "UNLICENSED",
   "packageManager": "pnpm@10.16.1+sha512.0e155aa2629db8672b49e8475da6226aa4bdea85fdcdfdc15350874946d4f3c91faaf64cbdc4a5d1ab8002f473d5c3fcedcd197989cf0390f9badd3c04678706",
   "dependencies": {
     "@atproto-labs/fetch-node": "^0.1.10",
