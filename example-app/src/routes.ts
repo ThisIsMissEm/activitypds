@@ -184,6 +184,18 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   router.post(
+    "/manage-account",
+    handler(async (req, res) => {
+      const session = await getSession(req, res);
+      const agent = await getSessionAgent(req, res, ctx);
+
+      res.redirect(
+        new URL(`/account/${agent?.did}`, agent?.serverMetadata.issuer).href
+      );
+    })
+  );
+
+  router.post(
     "/signup",
     handler(async (req, res) => {
       const pds = req.body?.pds;

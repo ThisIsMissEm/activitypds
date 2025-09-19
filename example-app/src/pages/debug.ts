@@ -19,9 +19,14 @@ function content({ url, result }: Props) {
     <div class="container">
       <p>Requested: <code>${url}</code></p>
       <pre><code>${JSON.stringify(result, null, 2)}</code></pre>
-      <form action="/logout" method="post" class="login-form">
-        <button type="submit">Log out</button>
-      </form>
+      <div class="login-form">
+        <form action="/logout" method="post">
+          <button type="submit">Log out</button>
+        </form>
+        <form action="/manage-account" method="post">
+          <button type="submit">Manage Account</button>
+        </form>
+      </div>
     </div>
   </div>`;
 }
