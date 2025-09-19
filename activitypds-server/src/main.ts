@@ -11,6 +11,7 @@ const config: ServerConfig = {
     publicUrl: "https://activitypds.princess.works",
     devMode: true,
     handleDomains: [".princess.works", ".activitypds.example"],
+    requiredSecondFactor: true,
   },
   db: {
     location: "../db.sqlite",

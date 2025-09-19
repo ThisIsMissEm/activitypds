@@ -2,6 +2,7 @@ import {
   AuthenticateAccountData,
   CreateAccountData,
   InvalidRequestError,
+  SecondAuthenticationFactorRequiredError,
 } from "@atproto/oauth-provider";
 import { Database, Account } from "./db";
 import * as scrypt from "./utils/scrypt";
@@ -12,11 +13,7 @@ import { DID_WEB_PREFIX } from "./constants";
 export class UserAlreadyExistsError extends Error {}
 
 export class AccountManager {
-  private db: Database;
-
-  constructor(jwtSecretKey, db: Database) {
-    this.db = db;
-  }
+  constructor(protected db: Database, protected requireSecondFactor: boolean) {}
 
   async createAccount({
     password,
@@ -50,10 +47,7 @@ export class AccountManager {
     return registered;
   }
 
-  async login({
-    username,
-    password,
-  }: Pick<AuthenticateAccountData, "username" | "password">) {
+  async login({ username, password, emailOtp }: AuthenticateAccountData) {
     const identifier = username.toLowerCase();
 
     const start = Date.now();
@@ -72,6 +66,18 @@ export class AccountManager {
       );
 
       if (!validAccountPass) {
+        throw new AuthRequiredError("Invalid identifier or password");
+      }
+
+      if (this.requireSecondFactor && !emailOtp) {
+        // generate 2fa token
+        throw new SecondAuthenticationFactorRequiredError(
+          "emailOtp",
+          account.email
+        );
+      }
+
+      if (emailOtp !== "22222-22222") {
         throw new AuthRequiredError("Invalid identifier or password");
       }
 

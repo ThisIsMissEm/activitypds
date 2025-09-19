@@ -55,7 +55,10 @@ export class AppContext {
     await migrateToLatest(db);
 
     // const actorStore = new ActorStore(db);
-    const accountManager = new AccountManager(jwtSecretKey, db);
+    const accountManager = new AccountManager(
+      db,
+      cfg.service.requiredSecondFactor
+    );
 
     /**
      * A fetch() function that protects against SSRF attacks, large responses &

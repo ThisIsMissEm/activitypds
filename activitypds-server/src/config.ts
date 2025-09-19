@@ -24,6 +24,7 @@ export type ServiceConfig = {
   contactEmailAddress?: string;
   devMode: boolean;
   handleDomains: string[];
+  requiredSecondFactor: boolean;
 };
 
 export type DatabaseConfig = {
