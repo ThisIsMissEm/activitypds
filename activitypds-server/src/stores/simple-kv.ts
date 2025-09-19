@@ -1,6 +1,13 @@
 import { Transaction } from "kysely";
 import { Database, DatabaseSchema, SimpleKVRow, SimpleKVRowEntry } from "../db";
-import { Encodable, fromDateISO, toDateISO, toJson } from "../db/cast";
+import {
+  Encodable,
+  fromDateISO,
+  fromJson,
+  JsonEncoded,
+  toDateISO,
+  toJson,
+} from "../db/cast";
 
 export type SimpleKVRecord =
   | {
@@ -15,21 +22,55 @@ export type SimpleKVRecord =
       expiresAt: Date | null;
     };
 
-export type Methods = {
+export type Methods<Mappings extends string[]> = {
   get(key: string): Promise<SimpleKVRecord | null>;
   put(key: string, value: Encodable, expiresAt?: Date | null): Promise<void>;
-  putMapping(type: string, key: string, targetId: string): Promise<void>;
+
+  getMapping<T extends Encodable>(
+    type: Mappings[number],
+    key?: string
+  ): Promise<T | null>;
+  getMultiMapping<T extends Encodable>(
+    type: Mappings[number],
+    key?: string
+  ): Promise<T[] | null>;
+
+  putMapping(
+    type: Mappings[number],
+    key: string,
+    targetId: string | string[]
+  ): Promise<void>;
+
+  removeMapping<T extends Encodable>(
+    type: Mappings[number],
+    key?: string
+  ): Promise<T | null>;
+  removeMultiMapping<T extends Encodable>(
+    type: Mappings[number],
+    key?: string
+  ): Promise<T[] | null>;
+
   remove(key: string, addPrefix?: boolean): Promise<SimpleKVRecord | null>;
   removeExpired(expiry?: Date): Promise<void>;
 };
 
-export type TransactionCallback = (
-  this: Methods,
+export type TransactionCallback<Mapping extends string[]> = (
+  this: Methods<Mapping>,
   trx: Transaction<DatabaseSchema>
 ) => Promise<void>;
 
-export class SimpleKV implements Methods {
-  constructor(protected db: Database, protected type: string) {}
+export class SimpleKV<Mappings extends Array<string> = []>
+  implements Methods<Mappings>
+{
+  constructor(
+    protected db: Database,
+    protected type: string,
+    protected mappings?: Mappings[number][]
+  ) {}
+
+  getPrefix() {
+    return `${this.type}:`;
+  }
 
   // Queries:
   getQuery(dbOrTrx: Database | Transaction<DatabaseSchema>, key: string) {
@@ -53,17 +94,17 @@ export class SimpleKV implements Methods {
 
   putMappingQuery(
     dbOrTrx: Database | Transaction<DatabaseSchema>,
-    type: string,
+    type: Mappings[number],
     key: string,
-    targetId: string
+    value: string
   ) {
     return dbOrTrx
       .insertInto("simple_kv_store")
       .orReplace()
       .values({
-        type: `mapping_${type}`,
+        type: `mapping_${type}_to_${this.type}`,
         key: `${type}:${key}`,
-        value: `${this.type}:${targetId}`,
+        value,
       });
   }
 
@@ -94,20 +135,53 @@ export class SimpleKV implements Methods {
   }
 
   // Methods:
-  async get(key: string): Promise<SimpleKVRecord | null> {
-    return this.getInternal(this.db, `${this.type}:${key}`);
+  async get(
+    key: string,
+    withoutPrefix: boolean = false
+  ): Promise<SimpleKVRecord | null> {
+    return this.getInternal(
+      this.db,
+      withoutPrefix ? key : `${this.type}:${key}`
+    );
   }
 
-  async getMapping(type: string, key?: string): Promise<SimpleKVRecord | null> {
-    return this.getInternal(this.db, key ? `${type}:${key}` : type);
+  async getMapping<T extends Encodable>(
+    type: Mappings[number],
+    key?: string
+  ): Promise<T | null> {
+    return this.getMappingInternal<T>(this.db, false, type, key);
+  }
+
+  async getMultiMapping<T extends Encodable>(
+    type: Mappings[number],
+    key?: string
+  ): Promise<T[] | null> {
+    return this.getMappingInternal<T[]>(this.db, true, type, key);
   }
 
   async put(key: string, value: Encodable, expiresAt?: Date | null) {
     return this.putInternal(this.db, key, value, expiresAt);
   }
 
-  async putMapping(type: string, key: string, target: string) {
-    return this.putMappingInternal(this.db, type, key, target);
+  async putMapping(
+    type: Mappings[number],
+    key: string,
+    value: string | string[]
+  ) {
+    return this.putMappingInternal(this.db, type, key, value);
+  }
+
+  async removeMapping<T extends Encodable>(
+    type: Mappings[number],
+    key?: string
+  ) {
+    return this.removeMappingInternal<T>(this.db, false, type, key);
+  }
+  async removeMultiMapping<T extends Encodable>(
+    type: Mappings[number],
+    key?: string
+  ) {
+    return this.removeMappingInternal<T[]>(this.db, true, type, key);
   }
 
   async remove(key: string, addPrefix?: boolean) {
@@ -118,7 +192,7 @@ export class SimpleKV implements Methods {
     return this.removeExpiredInternal(this.db, expiry);
   }
 
-  async transaction(transactionCallback: TransactionCallback) {
+  async transaction(transactionCallback: TransactionCallback<Mappings>) {
     await this.db.transaction().execute(async (trx) => {
       const api = {
         get: (key: string) => {
@@ -127,8 +201,36 @@ export class SimpleKV implements Methods {
         put: (key: string, value: Encodable, expiresAt?: Date | null) => {
           return this.putInternal(trx, key, value, expiresAt);
         },
-        putMapping: (type: string, key: string, target: string) => {
-          return this.putMappingInternal(trx, type, key, target);
+        getMapping: <T extends Encodable>(
+          type: Mappings[number],
+          key?: string
+        ) => {
+          return this.getMappingInternal<T>(trx, false, type, key);
+        },
+        getMultiMapping: <T extends Encodable>(
+          type: Mappings[number],
+          key?: string
+        ) => {
+          return this.getMappingInternal<T[]>(trx, true, type, key);
+        },
+        putMapping: (
+          type: Mappings[number],
+          key: string,
+          value: string | string[]
+        ) => {
+          return this.putMappingInternal(trx, type, key, value);
+        },
+        removeMapping: <T extends Encodable>(
+          type: Mappings[number],
+          key?: string
+        ) => {
+          return this.removeMappingInternal<T>(trx, false, type, key);
+        },
+        removeMultiMapping: <T extends Encodable>(
+          type: Mappings[number],
+          key?: string
+        ) => {
+          return this.removeMappingInternal<T[]>(trx, true, type, key);
         },
         remove: (key: string, addPrefix?: boolean) => {
           return this.removeInternal(trx, key, addPrefix);
@@ -161,15 +263,57 @@ export class SimpleKV implements Methods {
     await dbOrTrx.executeQuery(this.putQuery(dbOrTrx, key, value, expiresAt));
   }
 
+  private async getMappingInternal<T extends Encodable>(
+    dbOrTrx: Database | Transaction<DatabaseSchema>,
+    multi: boolean,
+    type: Mappings[number],
+    key?: string
+  ) {
+    const row = await this.getQuery(
+      dbOrTrx,
+      key ? `${type}:${key}` : type
+    ).executeTakeFirst();
+    if (!row) return null;
+    if (multi) {
+      return fromJson<T>(row.value as JsonEncoded<T>);
+    } else {
+      return row.value as T;
+    }
+  }
+
   private async putMappingInternal(
     dbOrTrx: Database | Transaction<DatabaseSchema>,
     type: string,
     key: string,
-    target: string
+    target: string | string[]
   ) {
     await dbOrTrx.executeQuery(
-      this.putMappingQuery(dbOrTrx, type, key, target)
+      this.putMappingQuery(
+        dbOrTrx,
+        type,
+        key,
+        Array.isArray(target) ? toJson(target) : target
+      )
     );
+  }
+
+  private async removeMappingInternal<T extends Encodable>(
+    dbOrTrx: Database | Transaction<DatabaseSchema>,
+    multi: boolean,
+    type: Mappings[number],
+    key?: string
+  ) {
+    const row = await this.removeQuery(
+      dbOrTrx,
+      key ? `${type}:${key}` : type
+    ).executeTakeFirst();
+
+    if (!row) return null;
+    if (multi) {
+      return fromJson<T>(row.value as JsonEncoded<T>);
+    } else {
+      return row.value as T;
+    }
   }
 
   private async removeInternal(

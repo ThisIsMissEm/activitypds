@@ -51,22 +51,37 @@ function notImplemented(): never {
 export class OAuthStore
   implements AccountStore, RequestStore, DeviceStore, LexiconStore, TokenStore
 {
-  private accountDevices: SimpleKV;
-  private authorizedClients: SimpleKV;
-  private authorizationRequests: SimpleKV;
+  private accountDevices: SimpleKV<["sub_devices"]>;
+  private authorizedClients: SimpleKV<["sub_clients"]>;
+  private authorizationRequests: SimpleKV<
+    ["authorization_code_requests", "device_requests"]
+  >;
   private devices: SimpleKV;
-  private tokens: SimpleKV;
+  private tokens: SimpleKV<
+    ["account_tokens", "refresh_token", "authorization_code"]
+  >;
 
   constructor(
     private readonly accountManager: AccountManager,
     private readonly db: Database,
     private readonly publicUrl: string
   ) {
-    this.accountDevices = new SimpleKV(this.db, "account_devices");
-    this.authorizedClients = new SimpleKV(this.db, "authorized_clients");
-    this.authorizationRequests = new SimpleKV(this.db, "authorization_request");
+    this.accountDevices = new SimpleKV(this.db, "account_devices", [
+      "sub_devices",
+    ]);
+    this.authorizedClients = new SimpleKV(this.db, "authorized_clients", [
+      "sub_clients",
+    ]);
+    this.authorizationRequests = new SimpleKV(
+      this.db,
+      "authorization_request",
+      ["authorization_code_requests", "device_requests"]
+    );
     this.devices = new SimpleKV(this.db, "devices");
-    this.tokens = new SimpleKV(this.db, "tokens");
+    this.tokens = new SimpleKV(this.db, "tokens", [
+      "account_tokens",
+      "refresh_token",
+    ]);
   }
 
   //
@@ -78,13 +93,38 @@ export class OAuthStore
     refreshToken?: RefreshToken
   ): Promise<void> {
     await this.tokens.put(tokenId, data);
+
+    const tokens = await this.tokens.getMultiMapping<TokenId>(
+      "account_tokens",
+      data.sub
+    );
+    if (tokens) {
+      await this.tokens.putMapping(
+        "account_tokens",
+        data.sub,
+        tokens.concat([tokenId])
+      );
+    } else {
+      await this.tokens.putMapping("account_tokens", data.sub, [tokenId]);
+    }
+
     if (refreshToken) {
       await this.tokens.putMapping("refresh_token", refreshToken, tokenId);
+    }
+    if (data.code) {
+      await this.tokens.putMapping("authorization_code", data.code, tokenId);
     }
   }
 
   async readToken(tokenId: TokenId): Promise<null | TokenInfo> {
-    const tokenData = await this.tokens.get(tokenId);
+    return this.readTokenInternal(tokenId);
+  }
+
+  private async readTokenInternal(
+    tokenId: TokenId,
+    withoutPrefix: boolean = false
+  ): Promise<null | TokenInfo> {
+    const tokenData = await this.tokens.get(tokenId, withoutPrefix);
     if (!tokenData) return null;
     const token = fromJson<TokenData>(
       tokenData.value as JsonEncoded<TokenData>
@@ -122,17 +162,35 @@ export class OAuthStore
     const token = fromJson<TokenData>(existing.value as JsonEncoded<TokenData>);
 
     await this.tokens.put(newTokenId, merge(token, newData));
+
+    const tokens = await this.tokens.getMultiMapping<TokenId>(
+      "account_tokens",
+      token.sub
+    );
+    if (tokens) {
+      const newTokens = tokens
+        .filter((id) => id !== tokenId)
+        .concat([newTokenId]);
+
+      await this.tokens.putMapping("account_tokens", token.sub, newTokens);
+    } else {
+      await this.tokens.putMapping("account_tokens", token.sub, [newTokenId]);
+    }
+
     await this.tokens.putMapping("refresh_token", newRefreshToken, newTokenId);
   }
 
   async findTokenByRefreshToken(
     refreshToken: RefreshToken
   ): Promise<null | TokenInfo> {
-    const tokenId = await this.tokens.getMapping("refresh_token", refreshToken);
+    const tokenId = await this.tokens.getMapping<string>(
+      "refresh_token",
+      refreshToken
+    );
     oauthLogger.info({ tokenId, refreshToken }, "findTokenByRefreshToken");
 
     if (!tokenId) return null;
-    const tokenData = await this.tokens.getMapping(tokenId.value);
+    const tokenData = await this.tokens.get(tokenId, true);
     oauthLogger.info({ tokenData });
 
     if (!tokenData) return null;
@@ -147,7 +205,7 @@ export class OAuthStore
     }
 
     return {
-      id: tokenId.value as TokenId,
+      id: tokenId as TokenId,
       data: token,
       account: account.account,
       currentRefreshToken: refreshToken,
@@ -155,11 +213,24 @@ export class OAuthStore
   }
 
   async findTokenByCode(code: Code): Promise<null | TokenInfo> {
+    oauthLogger.info({ code }, "findTokenByCode");
     notImplemented();
   }
 
   async listAccountTokens(sub: Sub): Promise<TokenInfo[]> {
-    notImplemented();
+    const accountTokens = await this.tokens.getMultiMapping<TokenId>(
+      "account_tokens",
+      sub
+    );
+    if (!accountTokens) return [];
+
+    const tokens = await Promise.all(
+      accountTokens.map((tokenId) => {
+        return this.readTokenInternal(tokenId, true);
+      })
+    );
+
+    return tokens.filter((token) => token !== null);
   }
 
   //
@@ -196,10 +267,18 @@ export class OAuthStore
     data: AuthorizedClientData
   ): Promise<void> {
     oauthLogger.info({ sub, clientId, data }, "setAuthorizedClient");
-    await Promise.all([
-      this.authorizedClients.put(clientId, data),
-      this.authorizedClients.putMapping("sub_to_client", sub, clientId),
-    ]);
+    await this.authorizedClients.put(clientId, data);
+    const existingClients =
+      await this.authorizedClients.getMultiMapping<ClientId>(
+        "sub_clients",
+        sub
+      );
+    if (existingClients) {
+      const clients = Array.from(new Set(existingClients.concat([clientId])));
+      await this.authorizedClients.putMapping("sub_clients", sub, clients);
+    } else {
+      await this.authorizedClients.putMapping("sub_clients", sub, [clientId]);
+    }
   }
 
   async getAccount(
@@ -223,29 +302,29 @@ export class OAuthStore
   }
 
   async getAuthorizedClients(sub: Sub): Promise<AuthorizedClients> {
-    const authorizedClientIds = await this.authorizedClients.getMapping(
-      "sub_to_client",
-      sub
-    );
+    const authorizedClientIds =
+      await this.authorizedClients.getMultiMapping<ClientId>(
+        "sub_clients",
+        sub
+      );
 
     const results = new Map();
     if (!authorizedClientIds) {
       return results;
     }
 
-    const authorizedClientId = authorizedClientIds.value;
-    const authorizedClient = await this.authorizedClients.getMapping(
-      authorizedClientId
+    oauthLogger.info({ authorizedClientIds }, "getAuthorizedClients");
+    await Promise.all(
+      authorizedClientIds.map(async (clientId) => {
+        const client = await this.authorizedClients.get(clientId);
+        if (client) {
+          const clientData = fromJson<AuthorizedClientData>(
+            client.value as JsonEncoded<AuthorizedClientData>
+          );
+          results.set(clientId, clientData);
+        }
+      })
     );
-    if (!authorizedClient) {
-      return results;
-    }
-
-    const authorizedClientData = fromJson<AuthorizedClientData>(
-      authorizedClient.value as JsonEncoded<AuthorizedClientData>
-    );
-
-    results.set(authorizedClientId, authorizedClientData);
 
     oauthLogger.info(
       Object.fromEntries(results.entries()),
@@ -265,6 +344,19 @@ export class OAuthStore
         existingAccounts.add(sub);
         const accounts = Array.from(existingAccounts);
         await this.put(deviceId, accounts);
+
+        const existingDevices = await this.getMultiMapping<DeviceId>(
+          "sub_devices"
+        );
+        if (existingDevices) {
+          await this.putMapping(
+            "sub_devices",
+            sub,
+            existingDevices.concat([deviceId])
+          );
+        } else {
+          await this.putMapping("sub_devices", sub, [deviceId]);
+        }
       } else {
         await this.put(deviceId, [sub]);
       }
@@ -321,20 +413,76 @@ export class OAuthStore
 
   async removeDeviceAccount(deviceId: DeviceId, sub: Sub): Promise<void> {
     oauthLogger.info({ deviceId, sub }, "removeDeviceAccount");
-    // not implemented
+    await this.accountDevices.remove(deviceId);
+    await this.accountDevices.removeMultiMapping("sub_devices", sub);
   }
 
   async listDeviceAccounts(
     filter: { sub: Sub; deviceId: never } | { sub: never; deviceId: DeviceId }
   ): Promise<DeviceAccount[]> {
-    oauthLogger.info({ filter }, "listDeviceAccounts");
     const results: DeviceAccount[] = [];
     if (filter.sub) {
-      // not implemented
+      const sub = filter.sub;
+      const tokenIds = await this.tokens.getMultiMapping<TokenId>(
+        "account_tokens",
+        sub
+      );
+      oauthLogger.info({ sub, tokenIds }, "listDeviceAccounts by sub");
+      if (tokenIds) {
+        const tokens = await Promise.all(
+          tokenIds.map((token) => this.readTokenInternal(token, false))
+        );
+
+        const accessibleTokens = tokens.filter<TokenInfo>((token) => !!token);
+
+        const devices = new Map<DeviceId, DeviceData>();
+        const authorizedClientsByToken = new Map<TokenId, AuthorizedClients>();
+        await Promise.all(
+          accessibleTokens.map(async (token) => {
+            if (token.data.deviceId) {
+              const deviceData = await this.readDevice(token.data.deviceId);
+              if (deviceData) {
+                devices.set(token.data.deviceId, deviceData);
+              }
+            }
+
+            authorizedClientsByToken.set(
+              token.id,
+              await this.getAuthorizedClients(token.account.sub)
+            );
+          })
+        );
+
+        oauthLogger.info({
+          tokens,
+          devices: Object.fromEntries(devices.entries()),
+          authorizedClientsByToken: Object.fromEntries(
+            authorizedClientsByToken.entries()
+          ),
+        });
+
+        accessibleTokens.forEach((token) => {
+          if (!token.data.deviceId) return;
+
+          const device = devices.get(token.data.deviceId);
+          const authorizedClients = authorizedClientsByToken.get(token.id);
+          if (!device || !authorizedClients) return;
+
+          results.push({
+            deviceId: token.data.deviceId,
+            deviceData: device,
+            account: token.account,
+            authorizedClients,
+            updatedAt: new Date(),
+            createdAt: new Date(),
+          });
+        });
+      }
     }
 
     if (filter.deviceId) {
       const deviceId = filter.deviceId;
+      oauthLogger.info({ deviceId }, "listDeviceAccounts by device");
       const deviceData = await this.readDevice(deviceId);
       const deviceAccounts = await this.accountDevices.get(deviceId);
       if (deviceAccounts) {
@@ -430,7 +578,11 @@ export class OAuthStore
 
       await this.put(requestId, newData);
       if (newData.code) {
-        await this.putMapping("authorization_code", newData.code, requestId);
+        await this.putMapping(
+          "authorization_code_requests",
+          newData.code,
+          requestId
+        );
       }
       if (data.deviceId) {
         await this.putMapping("device_requests", data.deviceId, requestId);
@@ -443,21 +595,21 @@ export class OAuthStore
   }
 
   async consumeRequestCode(code: Code): Promise<FoundRequestResult | null> {
-    const requestId = await this.authorizationRequests
-      .removeQuery(this.db, `authorization_code:${code}`)
-      .executeTakeFirst();
-
+    // FIXME: If this throws findTokenByCode is called with the code, and then
+    // expects to retrieve the token info, this happens during token replays
+    const requestId = await this.authorizationRequests.removeMapping<RequestId>(
+      "authorization_code_requests",
+      code
+    );
+    oauthLogger.info({ requestId }, "consumeRequestCode");
     if (!requestId) return null;
 
-    const request = await this.authorizationRequests.remove(
-      requestId.value,
-      false
-    );
-
+    const request = await this.authorizationRequests.remove(requestId);
+    oauthLogger.info({ requestId, request }, "consumeRequestCode");
     if (!request) return null;
 
     return {
-      requestId: requestId.value as RequestId,
+      requestId: requestId,
       data: fromJson<RequestData>(request.value as JsonEncoded<RequestData>),
     };
   }
