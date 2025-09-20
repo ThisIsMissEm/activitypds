@@ -69,16 +69,18 @@ export class AccountManager {
         throw new AuthRequiredError("Invalid identifier or password");
       }
 
-      if (this.requireSecondFactor && !emailOtp) {
-        // generate 2fa token
-        throw new SecondAuthenticationFactorRequiredError(
-          "emailOtp",
-          account.email
-        );
-      }
+      if (this.requireSecondFactor && account.emailConfirmedAt) {
+        if (!emailOtp) {
+          // generate 2fa token
+          throw new SecondAuthenticationFactorRequiredError(
+            "emailOtp",
+            account.email
+          );
+        }
 
-      if (emailOtp !== "22222-22222") {
-        throw new AuthRequiredError("Invalid identifier or password");
+        if (emailOtp !== "22222-22222") {
+          throw new AuthRequiredError("Invalid 2FA");
+        }
       }
 
       return account;
