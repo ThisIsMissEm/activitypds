@@ -1,36 +1,33 @@
-import { type ResolveIdentityOptions } from "@atproto-labs/identity-resolver";
-import { AtprotoDid, NodeOAuthClient } from "@atproto/oauth-client-node";
+import {
+  DidWebMethod,
+  isResolvedHandle,
+  NodeOAuthClient,
+  ResolvedHandle,
+  ResolveHandleOptions,
+} from "@atproto/oauth-client-node";
 import { SessionStore, StateStore } from "./storage";
 import { AppContext } from "..";
 
 export const createClient = async (ctx: Omit<AppContext, "oauthClient">) => {
   const url = ctx.service.url;
+  const didWebResolver = new DidWebMethod({ fetch });
 
   return new NodeOAuthClient({
-    identityResolver: {
-      async resolve(identifier: string, options: ResolveIdentityOptions) {
-        const did = `did:web:${identifier}`;
-        return {
-          handle: identifier,
-          did: did as AtprotoDid,
-          didDoc: {
-            "@context": [
-              "https://www.w3.org/ns/did/v1",
-              "https://w3id.org/security/multikey/v1",
-              "https://w3id.org/security/suites/secp256k1-2019/v1",
-            ],
-            id: `did:web:${identifier}` as AtprotoDid,
-            alsoKnownAs: [`at://${identifier}`],
-            verificationMethod: [],
-            service: [
-              {
-                id: "#atproto_pds",
-                type: "AtprotoPersonalDataServer",
-                serviceEndpoint: ctx.pds.url,
-              },
-            ],
-          },
-        };
+    // Custom resolver to work around safeFetch issues in WellKnownHandleResolver,
+    // This does mean we don't do DNS TXT record lookups:
+    // See: https://github.com/bluesky-social/atproto/issues/4215
+    handleResolver: {
+      async resolve(
+        handle: string,
+        options?: ResolveHandleOptions
+      ): Promise<ResolvedHandle> {
+        const did = await didWebResolver.resolve(`did:web:${handle}`, options);
+
+        if (isResolvedHandle(did.id)) {
+          return did.id;
+        }
+
+        return null;
       },
     },
     clientMetadata: {

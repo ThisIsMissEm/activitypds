@@ -74,6 +74,9 @@ importers:
 
   example-app:
     dependencies:
+      '@atproto-labs/did-resolver':
+        specifier: ^0.2.1
+        version: 0.2.1
       '@atproto-labs/fetch-node':
         specifier: ^0.1.10
         version: 0.1.10

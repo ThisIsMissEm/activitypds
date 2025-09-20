@@ -11,7 +11,7 @@ import * as appRoutes from "./app-router";
 import { ServerConfig, ServerSecrets } from "./config";
 import { AppContext, AppContextOptions } from "./context";
 import * as error from "./error-handler";
-import { loggerMiddleware } from "./logger";
+import { httpLogger, loggerMiddleware } from "./logger";
 import compression from "./utils/compression";
 
 // import * as wellKnown from "./well-known";
@@ -53,6 +53,85 @@ export class ActivityPDS {
     app.use(authRoutes.createRouter(ctx)); // Before CORS
 
     app.use(cors({ maxAge: DAY / SECOND }));
+
+    app.get("/.well-known/atproto-did", async (req, res) => {
+      console.log(req.hostname, cfg.service.hostname);
+      if (req.hostname === cfg.service.hostname) {
+        return `did:web:${cfg.service.hostname}`;
+      }
+
+      const handleDomain = cfg.service.handleDomains.find((handleDomain) => {
+        return req.hostname.endsWith(handleDomain);
+      });
+      console.log({ handleDomain });
+      if (!handleDomain) {
+        return res.status(404).send("");
+      }
+
+      const account = await ctx.accountManager.getAccount(req.hostname);
+      if (!account) {
+        return res.status(404).send("");
+      }
+
+      res.send(`did:web:${account.handle}`);
+    });
+
+    app.get("/.well-known/did.json", async (req, res) => {
+      if (req.hostname === cfg.service.hostname) {
+        return res.json({
+          "@context": [
+            "https://www.w3.org/ns/did/v1",
+            "https://w3id.org/security/multikey/v1",
+          ],
+          id: `did:web:${cfg.service.hostname}`,
+          verificationMethod: [],
+          service: [],
+        });
+      }
+
+      const handleDomain = cfg.service.handleDomains.find((handleDomain) => {
+        return req.hostname.endsWith(handleDomain);
+      });
+
+      if (!handleDomain) {
+        return res.status(404).json({ error: "not_found" });
+      }
+
+      const username = req.hostname.slice(
+        0,
+        req.hostname.indexOf(handleDomain)
+      );
+
+      const account = await ctx.accountManager.getAccount(req.hostname);
+
+      if (!account) {
+        return res.status(404).json({ error: "not_found" });
+      }
+
+      httpLogger.info({
+        hostname: req.hostname,
+        handleDomain,
+        username,
+        account,
+      });
+
+      res.json({
+        "@context": [
+          "https://www.w3.org/ns/did/v1",
+          "https://w3id.org/security/multikey/v1",
+        ],
+        id: `did:web:${account.handle}`,
+        alsoKnownAs: [`at://${account.handle}`],
+        verificationMethod: [],
+        service: [
+          {
+            id: "#atproto_pds",
+            type: "AtprotoPersonalDataServer",
+            serviceEndpoint: cfg.service.publicUrl,
+          },
+        ],
+      });
+    });
 
     app.get("/", (req, res) => {
       res.send("Hello ActivityPDS!");
