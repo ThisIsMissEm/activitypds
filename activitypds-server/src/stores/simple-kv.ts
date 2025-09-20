@@ -80,6 +80,18 @@ export class SimpleKV<Mappings extends Array<string> = []>
       .selectAll();
   }
 
+  getLikeQuery(
+    dbOrTrx: Database | Transaction<DatabaseSchema>,
+    type: string,
+    value: string
+  ) {
+    return dbOrTrx
+      .selectFrom("simple_kv_store")
+      .where("key", "like", `${type}:%`)
+      .where("value", "like", `%${value}%`)
+      .selectAll();
+  }
+
   putQuery(
     dbOrTrx: Database | Transaction<DatabaseSchema>,
     key: string,

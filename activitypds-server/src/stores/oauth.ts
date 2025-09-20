@@ -58,7 +58,13 @@ export class OAuthStore
   >;
   private devices: SimpleKV;
   private tokens: SimpleKV<
-    ["account_tokens", "refresh_token", "authorization_code"]
+    [
+      "account_tokens",
+      "refresh_token",
+      "authorization_code",
+      "device_tokens",
+      "token_device"
+    ]
   >;
 
   constructor(
@@ -108,6 +114,23 @@ export class OAuthStore
       await this.tokens.putMapping("account_tokens", data.sub, [tokenId]);
     }
 
+    if (data.deviceId) {
+      await this.tokens.putMapping("token_device", tokenId, data.deviceId);
+      const tokens = await this.tokens.getMultiMapping<TokenId>(
+        "device_tokens",
+        data.deviceId
+      );
+      if (tokens) {
+        await this.tokens.putMapping(
+          "device_tokens",
+          data.deviceId,
+          tokens.concat([tokenId])
+        );
+      } else {
+        await this.tokens.putMapping("device_tokens", data.deviceId, [tokenId]);
+      }
+    }
+
     if (refreshToken) {
       await this.tokens.putMapping("refresh_token", refreshToken, tokenId);
     }
@@ -117,14 +140,7 @@ export class OAuthStore
   }
 
   async readToken(tokenId: TokenId): Promise<null | TokenInfo> {
-    return this.readTokenInternal(tokenId);
-  }
-
-  private async readTokenInternal(
-    tokenId: TokenId,
-    withoutPrefix: boolean = false
-  ): Promise<null | TokenInfo> {
-    const tokenData = await this.tokens.get(tokenId, withoutPrefix);
+    const tokenData = await this.tokens.get(tokenId);
     if (!tokenData) return null;
     const token = fromJson<TokenData>(
       tokenData.value as JsonEncoded<TokenData>
@@ -144,7 +160,63 @@ export class OAuthStore
   }
 
   async deleteToken(tokenId: TokenId): Promise<void> {
+    const tokenData = await this.tokens.get(tokenId);
+    oauthLogger.info({ tokenId }, "deleteToken");
+    if (!tokenData) return;
+    const token = fromJson<TokenData>(
+      tokenData.value as JsonEncoded<TokenData>
+    );
+
+    if (token.code) {
+      await this.tokens.removeMapping("authorization_code", token.code);
+    }
+
     await this.tokens.remove(tokenId);
+    const refreshTokens = await this.tokens
+      .getLikeQuery(this.db, "refresh_token", tokenId)
+      .execute();
+
+    oauthLogger.info({ refreshTokens, tokenId }, "deleteToken refresh tokens");
+
+    await Promise.all(
+      refreshTokens.map((token) => this.tokens.remove(token.key, false))
+    );
+
+    const tokens = await this.tokens.getMultiMapping<TokenId>(
+      "account_tokens",
+      token.sub
+    );
+
+    if (tokens) {
+      const newTokens = tokens.filter((tId) => tId !== tokenId);
+      if (newTokens.length) {
+        await this.tokens.putMapping("account_tokens", token.sub, newTokens);
+      } else {
+        await this.tokens.removeMapping("account_tokens", token.sub);
+      }
+    }
+
+    if (token.deviceId) {
+      const deviceTokens = await this.tokens.getMultiMapping<TokenId>(
+        "account_tokens",
+        token.deviceId
+      );
+
+      if (deviceTokens) {
+        const newTokens = deviceTokens.filter((tId) => tId !== tokenId);
+        if (newTokens.length) {
+          await this.tokens.putMapping(
+            "device_tokens",
+            token.deviceId,
+            newTokens
+          );
+        } else {
+          await this.tokens.removeMapping("device_tokens", token.deviceId);
+        }
+      }
+    }
+
+    await this.tokens.removeMapping("token_device", tokenId);
   }
 
   async rotateToken(
@@ -161,7 +233,26 @@ export class OAuthStore
 
     const token = fromJson<TokenData>(existing.value as JsonEncoded<TokenData>);
 
-    await this.tokens.put(newTokenId, merge(token, newData));
+    await this.tokens.put(newTokenId, merge(token, newData), newData.expiresAt);
+    const deviceId = await this.tokens.removeMapping<DeviceId>(
+      "token_device",
+      tokenId
+    );
+    if (deviceId) {
+      const deviceTokens = await this.tokens.getMultiMapping<TokenId>(
+        "device_tokens",
+        deviceId
+      );
+      if (deviceTokens) {
+        await this.tokens.putMapping(
+          "device_tokens",
+          deviceId,
+          deviceTokens.concat([newTokenId])
+        );
+      } else {
+        await this.tokens.putMapping("device_tokens", deviceId, [newTokenId]);
+      }
+    }
 
     const tokens = await this.tokens.getMultiMapping<TokenId>(
       "account_tokens",
@@ -171,8 +262,11 @@ export class OAuthStore
       const newTokens = tokens
         .filter((id) => id !== tokenId)
         .concat([newTokenId]);
-
-      await this.tokens.putMapping("account_tokens", token.sub, newTokens);
+      if (newTokens.length) {
+        await this.tokens.putMapping("account_tokens", token.sub, newTokens);
+      } else {
+        await this.tokens.removeMapping("account_tokens", token.sub);
+      }
     } else {
       await this.tokens.putMapping("account_tokens", token.sub, [newTokenId]);
     }
@@ -190,7 +284,7 @@ export class OAuthStore
     oauthLogger.info({ tokenId, refreshToken }, "findTokenByRefreshToken");
 
     if (!tokenId) return null;
-    const tokenData = await this.tokens.get(tokenId, true);
+    const tokenData = await this.tokens.get(tokenId);
     oauthLogger.info({ tokenData });
 
     if (!tokenData) return null;
@@ -226,9 +320,10 @@ export class OAuthStore
 
     const tokens = await Promise.all(
       accountTokens.map((tokenId) => {
-        return this.readTokenInternal(tokenId, true);
+        return this.readToken(tokenId);
       })
     );
+    oauthLogger.info({ accountTokens, tokens }, "listAccountTokens");
 
     return tokens.filter((token) => token !== null);
   }
@@ -308,6 +403,8 @@ export class OAuthStore
         sub
       );
 
+    oauthLogger.info({ authorizedClientIds }, "getAuthorizedClients");
+
     const results = new Map();
     if (!authorizedClientIds) {
       return results;
@@ -368,7 +465,6 @@ export class OAuthStore
     sub: Sub
   ): Promise<DeviceAccount | null> {
     oauthLogger.info({ deviceId, sub }, "getDeviceAccount");
-    const handle = this.subToHandle(sub);
     const deviceData = await this.readDevice(deviceId);
     const deviceAccounts = await this.accountDevices.get(deviceId);
     const account = await this.getAccount(sub);
@@ -387,10 +483,7 @@ export class OAuthStore
       ? fromJson(deviceAccounts.value as JsonEncoded<string[]>)
       : [];
 
-    oauthLogger.info(
-      { account, sub, handle, deviceAccountIds },
-      "getDeviceAccount"
-    );
+    oauthLogger.info({ account, sub, deviceAccountIds }, "getDeviceAccount");
 
     if (!deviceAccountIds.includes(sub) || account.account.sub !== sub) {
       return null;
@@ -415,6 +508,33 @@ export class OAuthStore
     oauthLogger.info({ deviceId, sub }, "removeDeviceAccount");
     await this.accountDevices.remove(deviceId);
     await this.accountDevices.removeMultiMapping("sub_devices", sub);
+
+    const tokens = await this.tokens.removeMultiMapping<TokenId>(
+      "device_tokens",
+      deviceId
+    );
+    if (tokens) {
+      await Promise.all(
+        tokens.map(async (tokenId) => {
+          await this.deleteToken(tokenId);
+
+          const refreshTokens = await this.tokens
+            .getLikeQuery(this.db, "refresh_token", tokenId)
+            .execute();
+
+          oauthLogger.info(
+            { refreshTokens, tokenId },
+            "deleteToken refresh tokens"
+          );
+
+          await Promise.all(
+            refreshTokens.map((token) => this.tokens.remove(token.key, false))
+          );
+        })
+      );
+    }
+
+    oauthLogger.info({ deviceId, sub, tokens }, "deleteToken devices");
   }
 
   async listDeviceAccounts(
@@ -430,13 +550,16 @@ export class OAuthStore
       oauthLogger.info({ sub, tokenIds }, "listDeviceAccounts by sub");
       if (tokenIds) {
         const tokens = await Promise.all(
-          tokenIds.map((token) => this.readTokenInternal(token, false))
+          tokenIds.map((token) => this.readToken(token))
         );
 
         const accessibleTokens = tokens.filter<TokenInfo>((token) => !!token);
 
         const devices = new Map<DeviceId, DeviceData>();
-        const authorizedClientsByToken = new Map<TokenId, AuthorizedClients>();
+        const accountsByToken = new Map<
+          TokenId,
+          { account: Account; authorizedClients: AuthorizedClients }
+        >();
         await Promise.all(
           accessibleTokens.map(async (token) => {
             if (token.data.deviceId) {
@@ -446,9 +569,9 @@ export class OAuthStore
               }
             }
 
-            authorizedClientsByToken.set(
+            accountsByToken.set(
               token.id,
-              await this.getAuthorizedClients(token.account.sub)
+              await this.getAccount(token.account.sub)
             );
           })
         );
@@ -456,23 +579,34 @@ export class OAuthStore
         oauthLogger.info({
           tokens,
           devices: Object.fromEntries(devices.entries()),
-          authorizedClientsByToken: Object.fromEntries(
-            authorizedClientsByToken.entries()
-          ),
+          accountsByToken: Object.fromEntries(accountsByToken.entries()),
         });
 
         accessibleTokens.forEach((token) => {
           if (!token.data.deviceId) return;
 
           const device = devices.get(token.data.deviceId);
-          const authorizedClients = authorizedClientsByToken.get(token.id);
-          if (!device || !authorizedClients) return;
+          const account = accountsByToken.get(token.id);
+          if (!device || !account) return;
+
+          if (account.account.sub !== token.account.sub) {
+            oauthLogger.info(
+              { tokenSub: token.account.sub, accountSub: account.account.sub },
+              "Mismatched subject"
+            );
+          }
+
+          oauthLogger.info({
+            authorizedClients: Object.fromEntries(
+              account.authorizedClients.entries()
+            ),
+          });
 
           results.push({
             deviceId: token.data.deviceId,
             deviceData: device,
-            account: token.account,
-            authorizedClients,
+            account: account.account,
+            authorizedClients: account.authorizedClients,
             updatedAt: new Date(),
             createdAt: new Date(),
           });
@@ -572,18 +706,32 @@ export class OAuthStore
     oauthLogger.info({ data }, "updateRequest");
     await this.authorizationRequests.transaction(async function () {
       const existing = await this.get(requestId);
-      const newData = existing
-        ? merge({}, fromJson(existing.value as JsonEncoded<RequestData>), data)
-        : data;
+      const existingData = existing
+        ? fromJson<RequestData>(existing.value as JsonEncoded<RequestData>)
+        : null;
+      const newData = existing ? merge({}, existingData, data) : data;
 
       await this.put(requestId, newData);
-      if (newData.code) {
+      if (data.code) {
         await this.putMapping(
           "authorization_code_requests",
-          newData.code,
+          data.code,
           requestId
         );
       }
+
+      if (existingData) {
+        if (existingData.deviceId && data.deviceId != existingData.deviceId) {
+          await this.removeMapping("device_requests", existingData.deviceId);
+        }
+        if (existingData.code && data.code != existingData.code) {
+          await this.removeMapping(
+            "authorization_code_requests",
+            existingData.code
+          );
+        }
+      }
+
       if (data.deviceId) {
         await this.putMapping("device_requests", data.deviceId, requestId);
       }
@@ -642,6 +790,7 @@ export class OAuthStore
   }
 
   async deleteDevice(deviceId: DeviceId): Promise<void> {
+    oauthLogger.info({ deviceId }, "deleteDevice");
     await this.devices.remove(deviceId);
   }
 
